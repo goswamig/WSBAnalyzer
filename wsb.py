@@ -7,7 +7,7 @@ from openai import OpenAI
 import json
 import logging
 from datetime import datetime, timedelta
-from collections import Counter
+
 # Set up logging
 logging.basicConfig(
     level=logging.INFO,
@@ -20,7 +20,8 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 class WSBSentimentAnalyzer:
-    def __init__(self, reddit_client_id: str, reddit_client_secret: str, reddit_user_agent: str, openai_api_key: str):
+    def __init__(self, reddit_client_id: str, reddit_client_secret: str, reddit_user_agent: str, 
+                 openai_api_key: str, smtp_email: str, smtp_password: str):
         """
         Initialize the WSB Sentiment Analyzer with necessary API credentials
         """
@@ -30,6 +31,10 @@ class WSBSentimentAnalyzer:
             user_agent=reddit_user_agent
         )
         self.openai_client = OpenAI(api_key=openai_api_key)
+        
+        # Email credentials
+        self.smtp_email = smtp_email
+        self.smtp_password = smtp_password
         
         # Load known stock tickers
         self.stock_tickers = self._load_stock_tickers()
@@ -56,6 +61,16 @@ class WSBSentimentAnalyzer:
         posts = {}  # Using dict to avoid duplicates by post ID
         subreddit = self.reddit.subreddit('wallstreetbets')
         
+        # Track statistics
+        stats = {
+            'total_posts_seen': 0,
+            'filtered_by_date': 0,
+            'filtered_by_score': 0,
+            'filtered_by_flair': 0,
+            'posts_by_sort_type': {'hot': 0, 'new': 0, 'top': 0, 'rising': 0},
+            'duplicates_found': 0
+        }
+        
         # Define different sorting methods to get comprehensive coverage
         sort_methods = {
             'hot': subreddit.hot,
@@ -66,37 +81,53 @@ class WSBSentimentAnalyzer:
         
         try:
             current_date = datetime.now().date()
+            logger.info(f"Starting scrape for date: {current_date}")
             
             for sort_name, sort_method in sort_methods.items():
                 logger.info(f"Scraping {sort_name} posts...")
                 
                 try:
                     for post in sort_method():
+                        stats['total_posts_seen'] += 1
                         post_date = datetime.fromtimestamp(post.created_utc).date()
                         
-                        # Only include posts from the current date and with minimum score
-                        if post_date == current_date and post.score >= min_score:
-                            if post.id not in posts:  # Avoid duplicates
-                                post_data = {
-                                    'id': post.id,
-                                    'title': post.title,
-                                    'body': post.selftext,
-                                    'score': post.score,
-                                    'created_utc': datetime.fromtimestamp(post.created_utc),
-                                    'url': post.url,
-                                    'num_comments': post.num_comments,
-                                    'upvote_ratio': post.upvote_ratio,
-                                    'sort_type': sort_name,  # Track where we found this post
-                                    'is_self': post.is_self,  # Is it a text post?
-                                    'link_flair_text': post.link_flair_text if hasattr(post, 'link_flair_text') else None
-                                }
-                                
-                                # Skip posts that are likely not relevant
-                                if any(flair in str(post_data['link_flair_text']).lower() 
-                                      for flair in ['meme', 'shitpost', 'weekend']):
-                                    continue
-                                
-                                posts[post.id] = post_data
+                        # Track post that doesn't match date criteria
+                        if post_date != current_date:
+                            stats['filtered_by_date'] += 1
+                            continue
+                            
+                        # Track post that doesn't match score criteria
+                        if post.score < min_score:
+                            stats['filtered_by_score'] += 1
+                            continue
+                        
+                        # Track duplicates
+                        if post.id in posts:
+                            stats['duplicates_found'] += 1
+                            continue
+                            
+                        post_data = {
+                            'id': post.id,
+                            'title': post.title,
+                            'body': post.selftext,
+                            'score': post.score,
+                            'created_utc': datetime.fromtimestamp(post.created_utc),
+                            'url': post.url,
+                            'num_comments': post.num_comments,
+                            'upvote_ratio': post.upvote_ratio,
+                            'sort_type': sort_name,  # Track where we found this post
+                            'is_self': post.is_self,  # Is it a text post?
+                            'link_flair_text': post.link_flair_text if hasattr(post, 'link_flair_text') else None
+                        }
+                        
+                        # Skip and track posts that are likely not relevant
+                        if any(flair in str(post_data['link_flair_text']).lower() 
+                              for flair in ['meme', 'shitpost', 'weekend']):
+                            stats['filtered_by_flair'] += 1
+                            continue
+                        
+                        posts[post.id] = post_data
+                        stats['posts_by_sort_type'][sort_name] += 1
                 
                 except Exception as e:
                     logger.error(f"Error in {sort_name} scraping: {e}")
@@ -104,12 +135,17 @@ class WSBSentimentAnalyzer:
             
             post_list = list(posts.values())
             
-            # Additional logging for visibility
-            logger.info(f"Scraping Summary:")
-            logger.info(f"Total posts scraped: {len(post_list)}")
+            # Enhanced logging with detailed statistics
+            logger.info("Scraping Summary:")
+            logger.info(f"Total posts processed: {stats['total_posts_seen']}")
+            logger.info(f"Posts filtered by date: {stats['filtered_by_date']}")
+            logger.info(f"Posts filtered by score (< {min_score}): {stats['filtered_by_score']}")
+            logger.info(f"Posts filtered by flair: {stats['filtered_by_flair']}")
+            logger.info(f"Duplicate posts found: {stats['duplicates_found']}")
+            logger.info(f"Final posts kept: {len(post_list)}")
+            logger.info(f"Posts by sort type: {stats['posts_by_sort_type']}")
             
-            if post_list:  # Only if we have posts
-                logger.info(f"Posts by sort type: {dict(Counter(p['sort_type'] for p in post_list))}")
+            if post_list:
                 logger.info(f"Time range: {min(p['created_utc'] for p in post_list)} to {max(p['created_utc'] for p in post_list)}")
             else:
                 logger.warning("No posts were found matching the criteria!")
@@ -128,10 +164,97 @@ class WSBSentimentAnalyzer:
         # Filter words that match known stock tickers
         return [word for word in words if word in self.stock_tickers]
 
-    def analyze_sentiment(self, text: str, tickers: List[str]) -> Dict:
+    def send_email_report(self, df: pd.DataFrame, summary: Dict, recipient_email: str):
         """
-        Analyze sentiment using OpenAI API
+        Send email report with sentiment analysis results
         """
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['Subject'] = f'WSB Sentiment Analysis Report - {datetime.now().strftime("%Y-%m-%d")}'
+            msg['From'] = self.smtp_email
+            msg['To'] = recipient_email
+
+            # Create HTML content
+            html_content = """
+            <html>
+            <head>
+                <style>
+                    table { border-collapse: collapse; width: 100%; }
+                    th, td { padding: 8px; text-align: left; }
+                    th { background-color: #f2f2f2; }
+                    tr:nth-child(even) { background-color: #f9f9f9; }
+                    .summary-section { margin-bottom: 20px; }
+                </style>
+            </head>
+            <body>
+            """
+
+            # Add summary statistics
+            html_content += """
+            <div class="summary-section">
+                <h2>Summary Statistics</h2>
+                <table>
+                    <tr><th>Metric</th><th>Value</th></tr>
+                    <tr><td>Total Tickers Analyzed</td><td>{}</td></tr>
+                    <tr><td>Total Mentions</td><td>{}</td></tr>
+                </table>
+            </div>
+            """.format(
+                summary['total_tickers_analyzed'],
+                sum(summary['sentiment_distribution'].values())
+            )
+
+            # Add most mentioned tickers
+            html_content += """
+            <div class="summary-section">
+                <h2>Most Mentioned Tickers</h2>
+                <table>
+                    <tr><th>Ticker</th><th>Mentions</th></tr>
+            """
+            for ticker, count in summary['most_mentioned_tickers'].items():
+                html_content += f"<tr><td>{ticker}</td><td>{count}</td></tr>"
+            html_content += "</table></div>"
+
+            # Add sentiment distribution
+            html_content += """
+            <div class="summary-section">
+                <h2>Sentiment Distribution</h2>
+                <table>
+                    <tr><th>Sentiment</th><th>Count</th></tr>
+            """
+            for sentiment, count in summary['sentiment_distribution'].items():
+                html_content += f"<tr><td>{sentiment}</td><td>{count}</td></tr>"
+            html_content += "</table></div>"
+
+            # Add high confidence calls
+            if summary['high_confidence_calls']:
+                # Convert high confidence calls to DataFrame for better formatting
+                high_conf_df = pd.DataFrame(summary['high_confidence_calls'])
+                high_conf_df = high_conf_df[['ticker', 'dominant_sentiment', 'avg_confidence', 'mention_count', 'reasoning_summary']]
+                high_conf_html = build_table(high_conf_df, 'blue_light')
+                html_content += f"""
+                <div class="summary-section">
+                    <h2>High Confidence Calls</h2>
+                    {high_conf_html}
+                </div>
+                """
+
+            html_content += "</body></html>"
+
+            # Attach HTML content
+            msg.attach(MIMEText(html_content, 'html'))
+
+            # Send email
+            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp_server:
+                smtp_server.login(self.smtp_email, self.smtp_password)
+                smtp_server.sendmail(self.smtp_email, recipient_email, msg.as_string())
+
+            logger.info(f"Email report sent successfully to {recipient_email}")
+            
+        except Exception as e:
+            logger.error(f"Error sending email report: {e}")
+            raise
         if not tickers:
             return {}
             
@@ -160,7 +283,7 @@ class WSBSentimentAnalyzer:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4o-mini",  # or "gpt-3.5-turbo" for faster, cheaper analysis
+                model="gpt-4",  # or "gpt-3.5-turbo" for faster, cheaper analysis
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
