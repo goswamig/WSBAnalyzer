@@ -11,3 +11,6 @@ node_modules/
 # Ignore all .env files
 .env*
 
+# .gitignore
+wsb_sentiment_report_*.csv
+wsb_sentiment_summary_*.json
