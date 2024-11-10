@@ -1,3 +1,4 @@
+import smtplib
 import praw
 import pandas as pd
 import datetime
@@ -7,6 +8,10 @@ from openai import OpenAI
 import json
 import logging
 from datetime import datetime, timedelta
+from typing import List, Dict, Union
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
+from pretty_html_table import build_table
 
 # Set up logging
 logging.basicConfig(
@@ -73,10 +78,10 @@ class WSBSentimentAnalyzer:
         
         # Define different sorting methods to get comprehensive coverage
         sort_methods = {
+            'rising': subreddit.rising,
             'hot': subreddit.hot,
             'new': subreddit.new,
-            'top': lambda: subreddit.top(time_filter=time_filter),
-            'rising': subreddit.rising
+            'top': lambda: subreddit.top(time_filter=time_filter)
         }
         
         try:
@@ -164,97 +169,10 @@ class WSBSentimentAnalyzer:
         # Filter words that match known stock tickers
         return [word for word in words if word in self.stock_tickers]
 
-    def send_email_report(self, df: pd.DataFrame, summary: Dict, recipient_email: str):
+    def analyze_sentiment(self, text: str, tickers: List[str]) -> Dict:
         """
-        Send email report with sentiment analysis results
+        Analyze sentiment using OpenAI API
         """
-        try:
-            # Create message
-            msg = MIMEMultipart()
-            msg['Subject'] = f'WSB Sentiment Analysis Report - {datetime.now().strftime("%Y-%m-%d")}'
-            msg['From'] = self.smtp_email
-            msg['To'] = recipient_email
-
-            # Create HTML content
-            html_content = """
-            <html>
-            <head>
-                <style>
-                    table { border-collapse: collapse; width: 100%; }
-                    th, td { padding: 8px; text-align: left; }
-                    th { background-color: #f2f2f2; }
-                    tr:nth-child(even) { background-color: #f9f9f9; }
-                    .summary-section { margin-bottom: 20px; }
-                </style>
-            </head>
-            <body>
-            """
-
-            # Add summary statistics
-            html_content += """
-            <div class="summary-section">
-                <h2>Summary Statistics</h2>
-                <table>
-                    <tr><th>Metric</th><th>Value</th></tr>
-                    <tr><td>Total Tickers Analyzed</td><td>{}</td></tr>
-                    <tr><td>Total Mentions</td><td>{}</td></tr>
-                </table>
-            </div>
-            """.format(
-                summary['total_tickers_analyzed'],
-                sum(summary['sentiment_distribution'].values())
-            )
-
-            # Add most mentioned tickers
-            html_content += """
-            <div class="summary-section">
-                <h2>Most Mentioned Tickers</h2>
-                <table>
-                    <tr><th>Ticker</th><th>Mentions</th></tr>
-            """
-            for ticker, count in summary['most_mentioned_tickers'].items():
-                html_content += f"<tr><td>{ticker}</td><td>{count}</td></tr>"
-            html_content += "</table></div>"
-
-            # Add sentiment distribution
-            html_content += """
-            <div class="summary-section">
-                <h2>Sentiment Distribution</h2>
-                <table>
-                    <tr><th>Sentiment</th><th>Count</th></tr>
-            """
-            for sentiment, count in summary['sentiment_distribution'].items():
-                html_content += f"<tr><td>{sentiment}</td><td>{count}</td></tr>"
-            html_content += "</table></div>"
-
-            # Add high confidence calls
-            if summary['high_confidence_calls']:
-                # Convert high confidence calls to DataFrame for better formatting
-                high_conf_df = pd.DataFrame(summary['high_confidence_calls'])
-                high_conf_df = high_conf_df[['ticker', 'dominant_sentiment', 'avg_confidence', 'mention_count', 'reasoning_summary']]
-                high_conf_html = build_table(high_conf_df, 'blue_light')
-                html_content += f"""
-                <div class="summary-section">
-                    <h2>High Confidence Calls</h2>
-                    {high_conf_html}
-                </div>
-                """
-
-            html_content += "</body></html>"
-
-            # Attach HTML content
-            msg.attach(MIMEText(html_content, 'html'))
-
-            # Send email
-            with smtplib.SMTP_SSL('smtp.gmail.com', 465) as smtp_server:
-                smtp_server.login(self.smtp_email, self.smtp_password)
-                smtp_server.sendmail(self.smtp_email, recipient_email, msg.as_string())
-
-            logger.info(f"Email report sent successfully to {recipient_email}")
-            
-        except Exception as e:
-            logger.error(f"Error sending email report: {e}")
-            raise
         if not tickers:
             return {}
             
@@ -283,7 +201,7 @@ class WSBSentimentAnalyzer:
         
         try:
             response = self.openai_client.chat.completions.create(
-                model="gpt-4",  # or "gpt-3.5-turbo" for faster, cheaper analysis
+                model="gpt-4o-mini",  # or "gpt-3.5-turbo" for faster, cheaper analysis
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt}
@@ -297,8 +215,11 @@ class WSBSentimentAnalyzer:
             return sentiment_data
         except Exception as e:
             logger.error(f"Error analyzing sentiment: {e}")
+            logger.error(f"Text being analyzed: {text[:500]}...")  # Log first 500 chars of text
+            logger.error(f"Tickers being analyzed: {tickers}")
             return {}
 
+    
     def generate_daily_report(self, posts: List[Dict]) -> pd.DataFrame:
         """
         Generate a daily sentiment report
@@ -397,6 +318,115 @@ class WSBSentimentAnalyzer:
         logger.info(f"Generated summary with {len(summary['most_mentioned_tickers'])} top tickers")
         return summary
 
+    def send_email_report(self, df: pd.DataFrame, summary: Dict, recipient_emails: Union[str, List[str]]):
+        """
+        Send email report with sentiment analysis results
+        """
+        if not all([self.smtp_email, self.smtp_password]):
+            logger.warning("Email credentials not provided. Skipping email report.")
+            return
+            
+        # Convert single email to list
+        if isinstance(recipient_emails, str):
+            recipient_emails = [recipient_emails]
+            
+        # Validate email addresses
+        valid_emails = [email.strip() for email in recipient_emails if '@' in email.strip()]
+        if not valid_emails:
+            logger.error("No valid email addresses provided")
+            return
+            
+        try:
+            # Create message
+            msg = MIMEMultipart()
+            msg['Subject'] = f'WSB Sentiment Analysis Report - {datetime.now().strftime("%Y-%m-%d")}'
+            msg['From'] = self.smtp_email
+            msg['To'] = ', '.join(valid_emails)
+
+            # Create HTML content
+            html_content = """
+            <html>
+            <head>
+                <style>
+                    table { border-collapse: collapse; width: 100%; }
+                    th, td { padding: 8px; text-align: left; }
+                    th { background-color: #4CAF50; color: white; }
+                    tr:nth-child(even) { background-color: #f2f2f2; }
+                    .summary-section { margin-bottom: 20px; }
+                </style>
+            </head>
+            <body>
+            <h1>WSB Sentiment Analysis Report</h1>
+            """
+
+            # Add summary statistics
+            if summary:
+                html_content += f"""
+                <div class="summary-section">
+                    <h2>Summary Statistics</h2>
+                    <table>
+                        <tr><th>Metric</th><th>Value</th></tr>
+                        <tr><td>Total Tickers Analyzed</td><td>{summary['total_tickers_analyzed']}</td></tr>
+                        <tr><td>Total Mentions</td><td>{sum(summary['sentiment_distribution'].values())}</td></tr>
+                    </table>
+                </div>
+                <div class="summary-section">
+                    <h2>Most Mentioned Tickers</h2>
+                    <table>
+                        <tr><th>Ticker</th><th>Mentions</th></tr>
+                """
+                for ticker, count in summary['most_mentioned_tickers'].items():
+                    html_content += f"<tr><td>{ticker}</td><td>{count}</td></tr>"
+                
+                html_content += """
+                    </table>
+                </div>
+                <div class="summary-section">
+                    <h2>Sentiment Distribution</h2>
+                    <table>
+                        <tr><th>Sentiment</th><th>Count</th></tr>
+                """
+                for sentiment, count in summary['sentiment_distribution'].items():
+                    html_content += f"<tr><td>{sentiment}</td><td>{count}</td></tr>"
+                
+                html_content += "</table></div>"
+
+                # Add high confidence calls
+                if summary.get('high_confidence_calls'):
+                    high_conf_df = pd.DataFrame(summary['high_confidence_calls'])
+                    if not high_conf_df.empty:
+                        high_conf_df = high_conf_df[['ticker', 'dominant_sentiment', 'avg_confidence', 'mention_count', 'reasoning_summary']]
+                        high_conf_html = build_table(high_conf_df, 'blue_light')
+                        html_content += f"""
+                        <div class="summary-section">
+                            <h2>High Confidence Calls</h2>
+                            {high_conf_html}
+                        </div>
+                        """
+
+            html_content += "</body></html>"
+
+            # Attach HTML content
+            msg.attach(MIMEText(html_content, 'html'))
+
+            # Send email using SSL
+            try:
+                with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as smtp_server:
+                    smtp_server.login(self.smtp_email, self.smtp_password)
+                    smtp_server.send_message(msg)
+                    logger.info(f"Email report sent successfully to {', '.join(valid_emails)}")
+            except smtplib.SMTPAuthenticationError:
+                logger.error("Failed to authenticate with Gmail. Make sure you're using an App Password if 2FA is enabled.")
+                raise
+            except Exception as e:
+                logger.error(f"Failed to send email: {str(e)}")
+                raise
+
+        except Exception as e:
+            logger.error(f"Error preparing email report: {e}")
+            raise
+
+
 def main():
     # Load configuration from environment variables or config file
     from dotenv import load_dotenv
@@ -408,9 +438,12 @@ def main():
         reddit_client_id=os.getenv('REDDIT_CLIENT_ID'),
         reddit_client_secret=os.getenv('REDDIT_CLIENT_SECRET'),
         reddit_user_agent=os.getenv('REDDIT_USER_AGENT'),
-        openai_api_key=os.getenv('OPENAI_API_KEY')
+        openai_api_key=os.getenv('OPENAI_API_KEY'),
+        smtp_email=os.getenv('SMTP_EMAIL'),
+        smtp_password=os.getenv('SMTP_PASSWORD')
     )
-    
+
+
     # Scrape posts
     posts = analyzer.scrape_wsb_posts()
     
@@ -423,6 +456,17 @@ def main():
     # Log summary
     logger.info("Daily WSB Sentiment Analysis Summary:")
     logger.info(json.dumps(summary, indent=2))
+
+    # Send email report to recipients
+    recipient_emails = os.getenv('RECIPIENT_EMAILS')
+    if recipient_emails:
+        try:
+            email_list = [email.strip() for email in recipient_emails.split(',')]
+            analyzer.send_email_report(report_df, summary, email_list)
+        except Exception as e:
+            logger.error(f"Failed to send email report: {e}")
+    else:
+        logger.info("No recipient emails configured. Skipping email report.")
 
 if __name__ == "__main__":
     main()
