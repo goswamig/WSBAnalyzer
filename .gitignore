@@ -9,7 +9,7 @@ __pycache__/
 node_modules/
 
 # Ignore all .env files
-.env*
+.env
 
 # .gitignore
 wsb_sentiment_report_*.csv
