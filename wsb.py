@@ -348,7 +348,7 @@ class WSBSentimentAnalyzer:
             <html>
             <head>
                 <style>
-                    table { border-collapse: collapse; width: 100%; }
+                    table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
                     th, td { padding: 8px; text-align: left; }
                     th { background-color: #4CAF50; color: white; }
                     tr:nth-child(even) { background-color: #f2f2f2; }
@@ -359,50 +359,81 @@ class WSBSentimentAnalyzer:
             <h1>WSB Sentiment Analysis Report</h1>
             """
 
-            # Add summary statistics
-            if summary:
-                html_content += f"""
-                <div class="summary-section">
-                    <h2>Summary Statistics</h2>
-                    <table>
-                        <tr><th>Metric</th><th>Value</th></tr>
-                        <tr><td>Total Tickers Analyzed</td><td>{summary['total_tickers_analyzed']}</td></tr>
-                        <tr><td>Total Mentions</td><td>{sum(summary['sentiment_distribution'].values())}</td></tr>
-                    </table>
-                </div>
-                <div class="summary-section">
-                    <h2>Most Mentioned Tickers</h2>
-                    <table>
-                        <tr><th>Ticker</th><th>Mentions</th></tr>
-                """
-                for ticker, count in summary['most_mentioned_tickers'].items():
-                    html_content += f"<tr><td>{ticker}</td><td>{count}</td></tr>"
-                
-                html_content += """
-                    </table>
-                </div>
-                <div class="summary-section">
-                    <h2>Sentiment Distribution</h2>
-                    <table>
-                        <tr><th>Sentiment</th><th>Count</th></tr>
-                """
-                for sentiment, count in summary['sentiment_distribution'].items():
-                    html_content += f"<tr><td>{sentiment}</td><td>{count}</td></tr>"
-                
-                html_content += "</table></div>"
+            # Add high confidence calls first
+            if summary.get('high_confidence_calls'):
+                high_conf_df = pd.DataFrame(summary['high_confidence_calls'])
+                if not high_conf_df.empty:
+                    high_conf_df = high_conf_df[['ticker', 'dominant_sentiment', 'avg_confidence', 'mention_count', 'reasoning_summary']]
+                    high_conf_html = build_table(high_conf_df, 'blue_light')
+                    html_content += f"""
+                    <div class="summary-section">
+                        <h2>High Confidence Calls</h2>
+                        {high_conf_html}
+                    </div>
+                    """
 
-                # Add high confidence calls
-                if summary.get('high_confidence_calls'):
-                    high_conf_df = pd.DataFrame(summary['high_confidence_calls'])
-                    if not high_conf_df.empty:
-                        high_conf_df = high_conf_df[['ticker', 'dominant_sentiment', 'avg_confidence', 'mention_count', 'reasoning_summary']]
-                        high_conf_html = build_table(high_conf_df, 'blue_light')
+            # Add merged summary statistics, most mentioned tickers, and sentiment distribution
+            if summary:
+                html_content += """
+                <div class="summary-section">
+                    <h2>Summary Overview</h2>
+                    <table>
+                        <tr>
+                            <th>Category</th>
+                            <th>Metric</th>
+                            <th>Value</th>
+                        </tr>
+                        <tr>
+                            <td rowspan="2">Overall Stats</td>
+                            <td>Total Tickers Analyzed</td>
+                            <td>{}</td>
+                        </tr>
+                        <tr>
+                            <td>Total Mentions</td>
+                            <td>{}</td>
+                        </tr>
+                """.format(
+                    summary['total_tickers_analyzed'],
+                    sum(summary['sentiment_distribution'].values())
+                )
+
+                # Add most mentioned tickers
+                for idx, (ticker, count) in enumerate(summary['most_mentioned_tickers'].items()):
+                    if idx == 0:
                         html_content += f"""
-                        <div class="summary-section">
-                            <h2>High Confidence Calls</h2>
-                            {high_conf_html}
-                        </div>
+                        <tr>
+                            <td rowspan="{len(summary['most_mentioned_tickers'])}">Top Mentioned Tickers</td>
+                            <td>{ticker}</td>
+                            <td>{count}</td>
+                        </tr>
                         """
+                    else:
+                        html_content += f"""
+                        <tr>
+                            <td>{ticker}</td>
+                            <td>{count}</td>
+                        </tr>
+                        """
+
+                # Add sentiment distribution
+                for idx, (sentiment, count) in enumerate(summary['sentiment_distribution'].items()):
+                    if idx == 0:
+                        html_content += f"""
+                        <tr>
+                            <td rowspan="{len(summary['sentiment_distribution'])}">Sentiment Distribution</td>
+                            <td>{sentiment}</td>
+                            <td>{count}</td>
+                        </tr>
+                        """
+                    else:
+                        html_content += f"""
+                        <tr>
+                            <td>{sentiment}</td>
+                            <td>{count}</td>
+                        </tr>
+                        """
+
+                html_content += "</table></div>"
 
             html_content += "</body></html>"
 
@@ -425,7 +456,6 @@ class WSBSentimentAnalyzer:
         except Exception as e:
             logger.error(f"Error preparing email report: {e}")
             raise
-
 
 def main():
     # Load configuration from environment variables or config file
