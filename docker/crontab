@@ -1,0 +1,4 @@
+# Run every 6 hours
+0 */6 * * * cd /app && /usr/local/bin/python3 /app/src/wsb.py >> /var/log/cron.log 2>&1
+
+# An empty line is required at the end of this file for a valid cron file

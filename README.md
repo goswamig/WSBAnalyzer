@@ -7,3 +7,9 @@
 - Reddit API credentials (create at https://www.reddit.com/prefs/apps)
 - OpenAI API key
 - Gmail account with App-specific password
+
+
+## For Docker
+1. To Run the service: `docker-compose up -d`
+2. To Stop the service: `docker-compose down`
+3. To check logs: `docker-compose logs -f`
