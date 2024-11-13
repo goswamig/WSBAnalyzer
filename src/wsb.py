@@ -435,8 +435,13 @@ class WSBSentimentAnalyzer:
 
                 html_content += "</table></div>"
 
-            html_content += "</body></html>"
-
+            # Add disclaimer
+            html_content += """
+            <div style="margin-top: 30px; padding: 10px; border-top: 1px solid #ccc; color: #666; font-style: italic; font-size: 12px;">
+                <p>This is not investment advice.</p>
+            </div>
+            </body></html>"""
+            
             # Attach HTML content
             msg.attach(MIMEText(html_content, 'html'))
 
