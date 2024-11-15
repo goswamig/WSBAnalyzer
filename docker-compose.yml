@@ -1,6 +1,28 @@
 version: '3.8'
 
 services:
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb-data:/var/lib/influxdb2
+      - influxdb-config:/etc/influxdb2
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=your_secure_password_here
+      - DOCKER_INFLUXDB_INIT_ORG=wsb_analytics
+      - DOCKER_INFLUXDB_INIT_BUCKET=wsb_sentiment
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=your_secure_token_here
+    healthcheck:
+      test: ["CMD", "influx", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
   wsb-analyzer:
     build:
       context: .
@@ -10,4 +32,11 @@ services:
       - ./logs:/var/log
     env_file:
       - .env
+    depends_on:
+      influxdb:
+        condition: service_healthy
     restart: unless-stopped
+
+volumes:
+  influxdb-data:
+  influxdb-config:

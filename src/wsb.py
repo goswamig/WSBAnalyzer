@@ -12,6 +12,7 @@ from typing import List, Dict, Union
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from pretty_html_table import build_table
+from db_config import WSBTimeSeriesDB
 
 # Set up logging
 logging.basicConfig(
@@ -26,7 +27,8 @@ logger = logging.getLogger(__name__)
 
 class WSBSentimentAnalyzer:
     def __init__(self, reddit_client_id: str, reddit_client_secret: str, reddit_user_agent: str, 
-                 openai_api_key: str, smtp_email: str, smtp_password: str):
+                 openai_api_key: str, smtp_email: str, smtp_password: str,
+                 influxdb_url: str = None, influxdb_token: str = None, influxdb_org: str = None, influxdb_bucket: str = None):
         """
         Initialize the WSB Sentiment Analyzer with necessary API credentials
         """
@@ -44,6 +46,23 @@ class WSBSentimentAnalyzer:
         # Load known stock tickers
         self.stock_tickers = self._load_stock_tickers()
         
+        # # InfluxDB configuration
+        # self.influxdb_url = influxdb_url
+        # self.influxdb_token = influxdb_token
+        # self.influxdb_org = influxdb_org
+        # self.influxdb_bucket = influxdb_bucket
+        
+        # Initialize InfluxDB client if credentials provided
+        self.db = None
+        if all([influxdb_url, influxdb_token, influxdb_org, influxdb_bucket]):
+            self.db = WSBTimeSeriesDB(
+                url=influxdb_url,
+                token=influxdb_token,
+                org=influxdb_org,
+                bucket=influxdb_bucket
+            )
+
+
     def _load_stock_tickers(self) -> set:
         """Load stock tickers from Yahoo Finance"""
         try:
@@ -277,7 +296,7 @@ class WSBSentimentAnalyzer:
 
     def save_report(self, df: pd.DataFrame, filename: str = None):
         """
-        Save the report to CSV and generate a summary
+        Save the report to CSV and InfluxDB, generate a summary
         """
         if filename is None:
             filename = f"wsb_sentiment_report_{datetime.now().strftime('%Y%m%d')}.csv"
@@ -316,7 +335,28 @@ class WSBSentimentAnalyzer:
             json.dump(summary, f, indent=4)
             
         logger.info(f"Generated summary with {len(summary['most_mentioned_tickers'])} top tickers")
+
+        # Store summary in InfluxDB if available
+        if self.db is not None and not df_summary.empty:
+            logger.info("Storing summary data in InfluxDB...")
+            self.db.store_summary_data(summary)
+
+        # Store data in InfluxDB if available
+        if self.db is not None and not df_summary.empty:
+            logger.info("Storing sentiment data in InfluxDB...")
+            for _, row in df_summary.iterrows():
+                try:
+                    self.db.store_sentiment_data(row.to_dict())
+                except Exception as e:
+                    logger.error(f"Error storing data for {row['ticker']}: {e}")
+
         return summary
+
+    def __del__(self):
+        """Cleanup database connection"""
+        if self.db is not None:
+            self.db.close()
+
 
     def send_email_report(self, df: pd.DataFrame, summary: Dict, recipient_emails: Union[str, List[str]]):
         """
@@ -341,7 +381,7 @@ class WSBSentimentAnalyzer:
             msg = MIMEMultipart()
             msg['Subject'] = f'WSB Sentiment Analysis Report - {datetime.now().strftime("%Y-%m-%d")}'
             msg['From'] = self.smtp_email
-            msg['To'] = ', '.join(valid_emails)
+            #msg['To'] = ', '.join(valid_emails)
 
             # Create HTML content
             html_content = """
@@ -449,7 +489,11 @@ class WSBSentimentAnalyzer:
             try:
                 with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10) as smtp_server:
                     smtp_server.login(self.smtp_email, self.smtp_password)
-                    smtp_server.send_message(msg)
+                    smtp_server.sendmail(
+                        self.smtp_email,
+                        valid_emails,  # Recipients will be BCC'd
+                        msg.as_string()
+                    )
                     logger.info(f"Email report sent successfully to {', '.join(valid_emails)}")
             except smtplib.SMTPAuthenticationError:
                 logger.error("Failed to authenticate with Gmail. Make sure you're using an App Password if 2FA is enabled.")
@@ -476,6 +520,11 @@ def main():
         openai_api_key=os.getenv('OPENAI_API_KEY'),
         smtp_email=os.getenv('SMTP_EMAIL'),
         smtp_password=os.getenv('SMTP_PASSWORD')
+        # Add InfluxDB configuration
+        influxdb_url=os.getenv('INFLUXDB_URL'),
+        influxdb_token=os.getenv('INFLUXDB_TOKEN'),
+        influxdb_org=os.getenv('INFLUXDB_ORG'),
+        influxdb_bucket=os.getenv('INFLUXDB_BUCKET')
     )
 
 
