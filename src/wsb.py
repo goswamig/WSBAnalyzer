@@ -519,7 +519,7 @@ def main():
         reddit_user_agent=os.getenv('REDDIT_USER_AGENT'),
         openai_api_key=os.getenv('OPENAI_API_KEY'),
         smtp_email=os.getenv('SMTP_EMAIL'),
-        smtp_password=os.getenv('SMTP_PASSWORD')
+        smtp_password=os.getenv('SMTP_PASSWORD'),
         # Add InfluxDB configuration
         influxdb_url=os.getenv('INFLUXDB_URL'),
         influxdb_token=os.getenv('INFLUXDB_TOKEN'),

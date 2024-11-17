@@ -12,10 +12,11 @@ services:
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
-      - DOCKER_INFLUXDB_INIT_PASSWORD=your_secure_password_here
+      - DOCKER_INFLUXDB_INIT_PASSWORD=InfluxDB123!  # Change this
       - DOCKER_INFLUXDB_INIT_ORG=wsb_analytics
       - DOCKER_INFLUXDB_INIT_BUCKET=wsb_sentiment
-      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=your_secure_token_here
+      - DOCKER_INFLUXDB_INIT_RETENTION=30d
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=my-super-secret-influx-token  # Change this
     healthcheck:
       test: ["CMD", "influx", "ping"]
       interval: 10s
@@ -23,6 +24,7 @@ services:
       retries: 3
     restart: unless-stopped
 
+    
   wsb-analyzer:
     build:
       context: .
@@ -30,12 +32,18 @@ services:
     container_name: wsb-analyzer
     volumes:
       - ./logs:/var/log
+      - ./src:/app/src  # Mount the src directory for development
     env_file:
       - .env
     depends_on:
       influxdb:
         condition: service_healthy
     restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "test", "-f", "/var/log/cron.log"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   influxdb-data:

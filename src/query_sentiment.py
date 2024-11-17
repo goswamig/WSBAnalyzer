@@ -18,13 +18,56 @@ def setup_db():
     load_dotenv()
     
     return WSBTimeSeriesDB(
-        url=os.getenv('INFLUXDB_URL'),
+        url=os.getenv('INFLUXDB_URL', 'http://localhost:8086'),
         token=os.getenv('INFLUXDB_TOKEN'),
         org=os.getenv('INFLUXDB_ORG'),
         bucket=os.getenv('INFLUXDB_BUCKET')
     )
 
-def query_sentiment(ticker: str = None, days: int = None, start_date: str = None, 
+def get_latest_records(limit: int = 10):
+    """Get the most recent records from the database"""
+    try:
+        db = setup_db()
+        data = db.query_latest_records(limit)
+        
+        if not data:
+            logger.warning("No recent records found")
+            return
+            
+        df = pd.DataFrame(data)
+        print("\nMost Recent Records:")
+        print("-" * 50)
+        print(df)
+        return df
+        
+    except Exception as e:
+        logger.error(f"Error getting latest records: {e}")
+        raise
+    finally:
+        db.close()
+
+def check_database_stats():
+    """Get basic database statistics"""
+    try:
+        db = setup_db()
+        stats = db.get_database_stats()
+        
+        print("\nDatabase Statistics:")
+        print("-" * 50)
+        print(f"Total Records: {stats.get('total_records', 'N/A')}")
+        print(f"Unique Tickers: {stats.get('unique_tickers', 'N/A')}")
+        print(f"Date Range: {stats.get('date_range', 'N/A')}")
+        print(f"Average Records per Day: {stats.get('avg_records_per_day', 'N/A')}")
+        
+        return stats
+        
+    except Exception as e:
+        logger.error(f"Error getting database stats: {e}")
+        raise
+    finally:
+        db.close()
+
+def query_sentiment(ticker: str = None, days: int = None, start_date: str = None,
                    end_date: str = None, output: str = None):
     """
     Query sentiment data with various filters
@@ -96,8 +139,18 @@ def main():
     parser.add_argument('--start', type=str, help='Start date (YYYY-MM-DD)')
     parser.add_argument('--end', type=str, help='End date (YYYY-MM-DD)')
     parser.add_argument('--output', type=str, help='Output CSV file path')
+    parser.add_argument('--latest', type=int, help='Show N most recent records')
+    parser.add_argument('--stats', action='store_true', help='Show database statistics')
     
     args = parser.parse_args()
+    
+    if args.latest:
+        get_latest_records(args.latest)
+        return
+        
+    if args.stats:
+        check_database_stats()
+        return
     
     if not any([args.ticker, args.days, args.start, args.end]):
         parser.print_help()

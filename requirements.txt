@@ -20,3 +20,6 @@ numpy>=1.24.0
 lxml>=4.9.0  # Required for pandas html parsing
 html5lib>=1.1  # Alternative parser for pandas
 beautifulsoup4>=4.12.0  # Required for pandas html parsing
+
+# InfluxDB client   
+influxdb-client>=1.36.0
