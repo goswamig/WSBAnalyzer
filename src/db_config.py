@@ -5,6 +5,7 @@ import os
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 import logging
+from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
@@ -195,6 +196,8 @@ class WSBTimeSeriesDB:
             logger.error(f"Error querying latest records: {e}")
             raise
 
+
+
     def get_database_stats(self) -> Dict:
         """
         Get basic statistics about the database contents
@@ -205,6 +208,7 @@ class WSBTimeSeriesDB:
             from(bucket: "{self.bucket}")
                 |> range(start: -30d)
                 |> filter(fn: (r) => r["_measurement"] == "wsb_sentiment")
+                |> filter(fn: (r) => r["_field"] == "weighted_sentiment")
                 |> count()
             '''
             
@@ -213,6 +217,8 @@ class WSBTimeSeriesDB:
             from(bucket: "{self.bucket}")
                 |> range(start: -30d)
                 |> filter(fn: (r) => r["_measurement"] == "wsb_sentiment")
+                |> filter(fn: (r) => r["_field"] == "weighted_sentiment")
+                |> group(columns: ["ticker"])
                 |> distinct(column: "ticker")
                 |> count()
             '''
@@ -222,12 +228,14 @@ class WSBTimeSeriesDB:
             from(bucket: "{self.bucket}")
                 |> range(start: -30d)
                 |> filter(fn: (r) => r["_measurement"] == "wsb_sentiment")
+                |> filter(fn: (r) => r["_field"] == "weighted_sentiment")
                 |> first()
                 |> yield(name: "first")
                 
             from(bucket: "{self.bucket}")
                 |> range(start: -30d)
                 |> filter(fn: (r) => r["_measurement"] == "wsb_sentiment")
+                |> filter(fn: (r) => r["_field"] == "weighted_sentiment")
                 |> last()
                 |> yield(name: "last")
             '''
@@ -250,10 +258,11 @@ class WSBTimeSeriesDB:
             result = self.query_api.query(range_query, org=self.org)
             for table in result:
                 for record in table.records:
-                    if table.name == 'first':
-                        first_date = record.get_time()
-                    elif table.name == 'last':
-                        last_date = record.get_time()
+                    time = record.get_time()
+                    if not first_date or time < first_date:
+                        first_date = time
+                    if not last_date or time > last_date:
+                        last_date = time
             
             # Calculate average records per day
             if first_date and last_date:
@@ -274,7 +283,6 @@ class WSBTimeSeriesDB:
         except Exception as e:
             logger.error(f"Error getting database stats: {e}")
             raise
-            
 
 
     def close(self):
@@ -285,6 +293,9 @@ class WSBTimeSeriesDB:
             logger.info("Database connection closed successfully")
         except Exception as e:
             logger.error(f"Error closing database connection: {e}")
+
+
+
 
 # Example environment variables needed for InfluxDB
 '''
