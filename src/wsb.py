@@ -116,7 +116,7 @@ class WSBSentimentAnalyzer:
                         post_date = datetime.fromtimestamp(post.created_utc).date()
                         
                         # Track post that doesn't match date criteria
-                        if post_date != current_date:
+                        if datetime.now() - datetime.fromtimestamp(post.created_utc) > timedelta(hours=24):
                             stats['filtered_by_date'] += 1
                             continue
                             
