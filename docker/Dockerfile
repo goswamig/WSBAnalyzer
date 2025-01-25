@@ -1,33 +1,55 @@
-FROM python:3.9-slim
+# Stage 1: Build stage
+FROM --platform=linux/amd64 python:3.9-slim AS builder
 
-# Set working directory
 WORKDIR /app
 
-# Copy requirements first to leverage Docker cache
+# Install build dependencies (Debian-style)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    gcc \
+    python3-dev \
+    libffi-dev \
+    libssl-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Create virtual environment
+RUN python -m venv /app/venv
+
+# Copy requirements
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN /app/venv/bin/pip install --no-cache-dir --no-warn-script-location -r requirements.txt
 
-# Create necessary directories
-RUN mkdir -p /app/src /app/config
+# Stage 2: Runtime stage
+FROM --platform=linux/amd64 python:3.9-slim
 
-# Copy the entire src directory
-COPY src/ /app/src/
+WORKDIR /app
 
-# Copy configuration files
-COPY config/.env.example /app/config/
-COPY .env /app/
+COPY --from=builder /app/venv /app/venv
+COPY src/ ./src/
+COPY config/.env.example ./config/
+COPY docker/entrypoint.sh ./
 
-# Create log directory and file
-RUN mkdir -p /var/log && \
-    touch /var/log/cron.log && \
-    chmod 0666 /var/log/cron.log
+# Set timezone to California (America/Los_Angeles)
+ENV TZ=America/Los_Angeles
 
-# Copy and setup entrypoint script
-COPY docker/entrypoint.sh /app/
-RUN chmod +x /app/entrypoint.sh
+# Install runtime deps (Debian-style)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    bash \
+    ca-certificates \
+    tzdata \
+    && ln -snf /usr/share/zoneinfo/$TZ /etc/localtime \
+    && echo $TZ > /etc/timezone \
+    && rm -rf /var/lib/apt/lists/*
 
-# Set Python path to include the src directory
-ENV PYTHONPATH="/app/src:${PYTHONPATH:-}"
+# User setup
+RUN adduser --disabled-password --gecos "" appuser && \
+    chown -R appuser:appuser /app && \
+    sed -i 's/\r$//' /app/entrypoint.sh && \
+    chmod +x /app/entrypoint.sh
 
-# Run the command on container startup
-ENTRYPOINT ["/app/entrypoint.sh"]
+ENV PATH="/app/venv/bin:$PATH" \
+    PYTHONPATH="/app/src:${PYTHONPATH:-}" \
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1
+
+USER appuser
+ENTRYPOINT ["sh", "/app/entrypoint.sh"]
