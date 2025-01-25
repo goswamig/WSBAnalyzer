@@ -28,20 +28,16 @@ while true; do
     current_time=$(date +%H:%M)
     current_epoch=$(date +%s)
     
-    # Determine target times based on day
+    # Determine target times
     if [ "$current_day" = "Sat" ] || [ "$current_day" = "Sun" ]; then
-        targets=("11:00" "20:00")  # Weekend times
+        targets="11:00 20:00"  # No arrays - use space-separated string
     else
-        targets=("06:25" "09:25" "12:25" "17:00" "21:00")  # Weekday times
+        targets="06:25 09:25 12:25 17:00 21:00"
     fi
 
-    # Find next valid target time
     next_run_epoch=""
-    for target in "${targets[@]}"; do
-        # Convert target time to epoch
+    for target in $targets; do
         target_epoch=$(date -d "$target" +%s 2>/dev/null)
-        
-        # Check if target is in future
         if [ -n "$target_epoch" ] && [ "$target_epoch" -gt "$current_epoch" ]; then
             if [ -z "$next_run_epoch" ] || [ "$target_epoch" -lt "$next_run_epoch" ]; then
                 next_run_epoch=$target_epoch
@@ -49,22 +45,19 @@ while true; do
         fi
     done
 
-    # If no targets left today, find first target of next valid day
     if [ -z "$next_run_epoch" ]; then
         days_to_add=1
         while true; do
             next_day_epoch=$((current_epoch + days_to_add * 86400))
             next_day=$(date -d "@$next_day_epoch" +%a)
             
-            # Get next day's targets
             if [ "$next_day" = "Sat" ] || [ "$next_day" = "Sun" ]; then
-                next_targets=("11:00" "20:00")
+                next_targets="11:00 20:00"
             else
-                next_targets=("06:25" "09:25" "12:25" "17:00" "21:00")
+                next_targets="06:25 09:25 12:25 17:00 21:00"
             fi
             
-            # Get first target of next day
-            first_target=${next_targets[0]}
+            first_target=$(echo "$next_targets" | awk '{print $1}')
             next_run_epoch=$(date -d "@$next_day_epoch $first_target" +%s 2>/dev/null)
             
             if [ -n "$next_run_epoch" ] && [ "$next_run_epoch" -gt "$current_epoch" ]; then
@@ -74,7 +67,6 @@ while true; do
         done
     fi
 
-    # Calculate sleep duration
     sleep_seconds=$((next_run_epoch - current_epoch))
     next_run_time=$(date -d "@$next_run_epoch")
     

@@ -52,4 +52,4 @@ ENV PATH="/app/venv/bin:$PATH" \
     PYTHONDONTWRITEBYTECODE=1
 
 USER appuser
-ENTRYPOINT ["sh", "/app/entrypoint.sh"]
+ENTRYPOINT ["/app/entrypoint.sh"]
