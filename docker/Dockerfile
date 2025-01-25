@@ -27,7 +27,7 @@ COPY docker/entrypoint.sh /app/
 RUN chmod +x /app/entrypoint.sh
 
 # Set Python path to include the src directory
-ENV PYTHONPATH="/app/src:${PYTHONPATH}"
+ENV PYTHONPATH="/app/src:${PYTHONPATH:-}"
 
 # Run the command on container startup
 ENTRYPOINT ["/app/entrypoint.sh"]
