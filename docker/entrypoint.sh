@@ -39,27 +39,30 @@ while true; do
     fi
 
     next_run_epoch=""
+
+    # Inside the scheduling loop
     for target in $targets; do
-        # Use UTC time for calculations
-        target_epoch=$(date -u -d "$target" +%s 2>/dev/null || date -j -f "%H:%M" "$target" +%s 2>/dev/null)
+        # Combine current date with target time
+        target_datetime=$(date -d "$(date +%Y-%m-%d) $target" +%s 2>/dev/null)
         
-        if [ -n "$target_epoch" ]; then
-            # Convert target to current timezone
-            target_epoch=$(date -d "@$target_epoch" +%s)
-            
-            if [ "$target_epoch" -gt "$current_epoch" ]; then
-                if [ -z "$next_run_epoch" ] || [ "$target_epoch" -lt "$next_run_epoch" ]; then
-                    next_run_epoch=$target_epoch
-                fi
+        if [ -n "$target_datetime" ] && [ "$target_datetime" -gt "$current_epoch" ]; then
+            if [ -z "$next_run_epoch" ] || [ "$target_datetime" -lt "$next_run_epoch" ]; then
+                next_run_epoch=$target_datetime
             fi
         fi
     done
-
-    # Fallback to next day if no targets found
+    
+    # If no targets found today, find first target of tomorrow
     if [ -z "$next_run_epoch" ]; then
-        echo "$(date) - No future targets found today, checking tomorrow..." | tee -a /var/log/cron.log
-        next_run_epoch=$((current_epoch + 86400))  # Add 24 hours
-        next_run_epoch=$(date -d "@$next_run_epoch" +%s)
+        echo "$(date) - No targets left today, checking tomorrow..." | tee -a /var/log/cron.log
+        tomorrow=$(date -d "tomorrow" +%Y-%m-%d)
+        if [ "$current_day" = "Fri" ]; then  # Handle weekend transition
+            next_targets="11:00 15:00 20:00"
+        else
+            next_targets=$targets
+        fi
+        first_target=$(echo "$next_targets" | awk '{print $1}')
+        next_run_epoch=$(date -d "$tomorrow $first_target" +%s)
     fi
 
     sleep_seconds=$((next_run_epoch - current_epoch))
