@@ -28,46 +28,47 @@ while true; do
     current_time=$(date +%H:%M)
     current_epoch=$(date +%s)
     
+    # Debug: Log current time
+    echo "$(date) - Current time: $current_day $current_time ($current_epoch)" | tee -a /var/log/cron.log
+    
     # Determine target times
     if [ "$current_day" = "Sat" ] || [ "$current_day" = "Sun" ]; then
-        targets="11:00 20:00"  # No arrays - use space-separated string
+        targets="11:00 15:00 20:00"
     else
         targets="06:25 09:25 12:25 17:00 21:00"
     fi
 
     next_run_epoch=""
     for target in $targets; do
-        target_epoch=$(date -d "$target" +%s 2>/dev/null)
-        if [ -n "$target_epoch" ] && [ "$target_epoch" -gt "$current_epoch" ]; then
-            if [ -z "$next_run_epoch" ] || [ "$target_epoch" -lt "$next_run_epoch" ]; then
-                next_run_epoch=$target_epoch
+        # Use UTC time for calculations
+        target_epoch=$(date -u -d "$target" +%s 2>/dev/null || date -j -f "%H:%M" "$target" +%s 2>/dev/null)
+        
+        if [ -n "$target_epoch" ]; then
+            # Convert target to current timezone
+            target_epoch=$(date -d "@$target_epoch" +%s)
+            
+            if [ "$target_epoch" -gt "$current_epoch" ]; then
+                if [ -z "$next_run_epoch" ] || [ "$target_epoch" -lt "$next_run_epoch" ]; then
+                    next_run_epoch=$target_epoch
+                fi
             fi
         fi
     done
 
+    # Fallback to next day if no targets found
     if [ -z "$next_run_epoch" ]; then
-        days_to_add=1
-        while true; do
-            next_day_epoch=$((current_epoch + days_to_add * 86400))
-            next_day=$(date -d "@$next_day_epoch" +%a)
-            
-            if [ "$next_day" = "Sat" ] || [ "$next_day" = "Sun" ]; then
-                next_targets="11:00 20:00"
-            else
-                next_targets="06:25 09:25 12:25 17:00 21:00"
-            fi
-            
-            first_target=$(echo "$next_targets" | awk '{print $1}')
-            next_run_epoch=$(date -d "@$next_day_epoch $first_target" +%s 2>/dev/null)
-            
-            if [ -n "$next_run_epoch" ] && [ "$next_run_epoch" -gt "$current_epoch" ]; then
-                break
-            fi
-            days_to_add=$((days_to_add + 1))
-        done
+        echo "$(date) - No future targets found today, checking tomorrow..." | tee -a /var/log/cron.log
+        next_run_epoch=$((current_epoch + 86400))  # Add 24 hours
+        next_run_epoch=$(date -d "@$next_run_epoch" +%s)
     fi
 
     sleep_seconds=$((next_run_epoch - current_epoch))
+    
+    # Prevent negative sleep time
+    if [ "$sleep_seconds" -lt 0 ]; then
+        sleep_seconds=0
+    fi
+
     next_run_time=$(date -d "@$next_run_epoch")
     
     echo "$(date) - Next analysis scheduled for: $next_run_time" | tee -a /var/log/cron.log
